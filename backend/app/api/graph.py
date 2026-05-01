@@ -246,8 +246,9 @@ def generate_ontology():
                 "total_text_length": project.total_text_length
             }
         })
-        
+
     except Exception as e:
+        logger.error(f"generate_ontology 异常: {type(e).__name__}: {e}", exc_info=True)
         return jsonify({
             "success": False,
             "error": str(e),
@@ -336,10 +337,17 @@ def build_graph():
             project.graph_build_task_id = None
             project.error = None
         
-        # 获取配置
+        # 获取配置 — chunk_size 根据文本长度自适应调整
         graph_name = data.get('graph_name', project.name or 'MiroFish Graph')
-        chunk_size = data.get('chunk_size', project.chunk_size or Config.DEFAULT_CHUNK_SIZE)
-        chunk_overlap = data.get('chunk_overlap', project.chunk_overlap or Config.DEFAULT_CHUNK_OVERLAP)
+        text_length = project.total_text_length or 0
+        if text_length > 80000:
+            adaptive_chunk = 800   # large documents: bigger chunks preserve context
+        elif text_length > 30000:
+            adaptive_chunk = 600
+        else:
+            adaptive_chunk = 400   # short documents: smaller chunks capture detail
+        chunk_size = data.get('chunk_size', project.chunk_size or adaptive_chunk)
+        chunk_overlap = data.get('chunk_overlap', project.chunk_overlap or max(50, chunk_size // 8))
         
         # 更新项目配置
         project.chunk_size = chunk_size

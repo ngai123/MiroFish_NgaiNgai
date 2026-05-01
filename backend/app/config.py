@@ -58,6 +58,10 @@ class Config:
         'TREND', 'REFRESH', 'DO_NOTHING', 'FOLLOW', 'MUTE'
     ]
     
+    # News Injector — optional, enables much better news targeting
+    # Free tier: 100 req/day — get key at https://newsapi.org/register
+    NEWS_API_KEY = os.environ.get('NEWS_API_KEY')
+
     # Report Agent配置
     REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
     REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))

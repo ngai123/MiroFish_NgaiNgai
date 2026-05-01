@@ -466,7 +466,8 @@ def prepare_simulation():
         
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)
-        parallel_profile_count = data.get('parallel_profile_count', 5)
+        # Zep free plan: 5 req/min on node detail endpoint — keep parallel low
+        parallel_profile_count = data.get('parallel_profile_count', 1)
         
         # ========== 同步获取实体数量（在后台任务启动前） ==========
         # 这样前端在调用prepare后立即就能获取到预期Agent总数

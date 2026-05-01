@@ -25,27 +25,67 @@ from .zep_entity_reader import EntityNode, ZepEntityReader
 
 logger = get_logger('mirofish.simulation_config')
 
-# 中国作息时间配置（北京时间）
-CHINA_TIMEZONE_CONFIG = {
-    # 深夜时段（几乎无人活动）
-    "dead_hours": [0, 1, 2, 3, 4, 5],
-    # 早间时段（逐渐醒来）
-    "morning_hours": [6, 7, 8],
-    # 工作时段
-    "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-    # 晚间高峰（最活跃）
-    "peak_hours": [19, 20, 21, 22],
-    # 夜间时段（活跃度下降）
-    "night_hours": [23],
-    # 活跃度系数
-    "activity_multipliers": {
-        "dead": 0.05,      # 凌晨几乎无人
-        "morning": 0.4,    # 早间逐渐活跃
-        "work": 0.7,       # 工作时段中等
-        "peak": 1.5,       # 晚间高峰
-        "night": 0.5       # 深夜下降
-    }
+# Timezone activity profiles — keyed by region/context
+# Each entry defines when people are active and relative intensity
+TIMEZONE_PROFILES = {
+    # East Asia (China, Korea, Japan) — UTC+8/+9
+    "east_asia": {
+        "dead_hours": [0, 1, 2, 3, 4, 5],
+        "morning_hours": [6, 7, 8],
+        "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+        "peak_hours": [19, 20, 21, 22],
+        "night_hours": [23],
+        "activity_multipliers": {"dead": 0.05, "morning": 0.4, "work": 0.7, "peak": 1.5, "night": 0.5},
+    },
+    # Southeast Asia (Malaysia, Indonesia, Thailand, Vietnam) — UTC+7/+8
+    "southeast_asia": {
+        "dead_hours": [0, 1, 2, 3, 4],
+        "morning_hours": [5, 6, 7, 8],
+        "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17],
+        "peak_hours": [18, 19, 20, 21, 22],
+        "night_hours": [23],
+        "activity_multipliers": {"dead": 0.05, "morning": 0.35, "work": 0.65, "peak": 1.6, "night": 0.55},
+    },
+    # Western (US, Europe) — UTC-8 to +1
+    "western": {
+        "dead_hours": [1, 2, 3, 4, 5],
+        "morning_hours": [6, 7, 8, 9],
+        "work_hours": [10, 11, 12, 13, 14, 15, 16, 17],
+        "peak_hours": [18, 19, 20, 21],
+        "night_hours": [22, 23, 0],
+        "activity_multipliers": {"dead": 0.03, "morning": 0.45, "work": 0.75, "peak": 1.4, "night": 0.6},
+    },
+    # Global / Online community (no dominant timezone)
+    "global": {
+        "dead_hours": [3, 4],
+        "morning_hours": [5, 6, 7, 8],
+        "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+        "peak_hours": [19, 20, 21, 22],
+        "night_hours": [23, 0, 1, 2],
+        "activity_multipliers": {"dead": 0.15, "morning": 0.5, "work": 0.8, "peak": 1.3, "night": 0.7},
+    },
 }
+
+# Default — kept for backward compatibility
+CHINA_TIMEZONE_CONFIG = TIMEZONE_PROFILES["east_asia"]
+
+
+def _detect_timezone_profile(simulation_requirement: str) -> dict:
+    """Infer the best timezone profile from simulation context keywords."""
+    req_lower = simulation_requirement.lower()
+    sea_keywords = ["malaysia", "indonesia", "thailand", "vietnam", "singapore",
+                    "southeast asia", "sea", "asean", "malay", "philippine"]
+    east_asia_keywords = ["china", "korea", "japan", "beijing", "shanghai", "taiwan",
+                          "hong kong", "chinese", "weibo", "wechat", "bilibili"]
+    western_keywords = ["usa", "united states", "europe", "uk", "twitter", "reddit",
+                        "facebook", "american", "western", "english"]
+    if any(k in req_lower for k in sea_keywords):
+        return TIMEZONE_PROFILES["southeast_asia"]
+    if any(k in req_lower for k in east_asia_keywords):
+        return TIMEZONE_PROFILES["east_asia"]
+    if any(k in req_lower for k in western_keywords):
+        return TIMEZONE_PROFILES["western"]
+    return TIMEZONE_PROFILES["global"]
 
 
 @dataclass
@@ -905,74 +945,98 @@ class SimulationConfigGenerator:
         
         return configs
     
-    def _generate_agent_config_by_rule(self, entity: EntityNode) -> Dict[str, Any]:
-        """基于规则生成单个Agent配置（中国人作息）"""
+    def _generate_agent_config_by_rule(
+        self, entity: EntityNode, tz_profile: dict | None = None
+    ) -> Dict[str, Any]:
+        """基于规则生成单个Agent配置，活跃时间根据时区档案动态调整"""
         entity_type = (entity.get_entity_type() or "Unknown").lower()
-        
+        tz = tz_profile or CHINA_TIMEZONE_CONFIG
+
+        # Build hour lists from the timezone profile
+        work_hours = tz.get("work_hours", list(range(9, 18)))
+        peak_hours = tz.get("peak_hours", [19, 20, 21, 22])
+        morning_hours = tz.get("morning_hours", [6, 7, 8])
+        all_day = sorted(set(morning_hours + work_hours + peak_hours))
+
         if entity_type in ["university", "governmentagency", "ngo"]:
             # 官方机构：工作时间活动，低频率，高影响力
             return {
                 "activity_level": 0.2,
                 "posts_per_hour": 0.1,
                 "comments_per_hour": 0.05,
-                "active_hours": list(range(9, 18)),  # 9:00-17:59
+                "active_hours": work_hours,
                 "response_delay_min": 60,
                 "response_delay_max": 240,
                 "sentiment_bias": 0.0,
                 "stance": "neutral",
                 "influence_weight": 3.0
             }
-        elif entity_type in ["mediaoutlet"]:
+        elif entity_type in ["mediaoutlet", "media", "journalist"]:
             # 媒体：全天活动，中等频率，高影响力
             return {
                 "activity_level": 0.5,
                 "posts_per_hour": 0.8,
                 "comments_per_hour": 0.3,
-                "active_hours": list(range(7, 24)),  # 7:00-23:59
+                "active_hours": all_day,
                 "response_delay_min": 5,
                 "response_delay_max": 30,
                 "sentiment_bias": 0.0,
                 "stance": "observer",
                 "influence_weight": 2.5
             }
-        elif entity_type in ["professor", "expert", "official"]:
+        elif entity_type in ["professor", "expert", "official", "researcher",
+                              "airesearcher", "scientist"]:
             # 专家/教授：工作+晚间活动，中等频率
             return {
                 "activity_level": 0.4,
                 "posts_per_hour": 0.3,
                 "comments_per_hour": 0.5,
-                "active_hours": list(range(8, 22)),  # 8:00-21:59
+                "active_hours": sorted(set(work_hours + peak_hours)),
                 "response_delay_min": 15,
                 "response_delay_max": 90,
                 "sentiment_bias": 0.0,
                 "stance": "neutral",
                 "influence_weight": 2.0
             }
-        elif entity_type in ["student"]:
-            # 学生：晚间为主，高频率
+        elif entity_type in ["student", "alumni"]:
+            # 学生/校友：早间+晚间为主，高频率
             return {
                 "activity_level": 0.8,
                 "posts_per_hour": 0.6,
                 "comments_per_hour": 1.5,
-                "active_hours": [8, 9, 10, 11, 12, 13, 18, 19, 20, 21, 22, 23],  # 上午+晚间
+                "active_hours": sorted(set(morning_hours + peak_hours)),
                 "response_delay_min": 1,
                 "response_delay_max": 15,
                 "sentiment_bias": 0.0,
                 "stance": "neutral",
                 "influence_weight": 0.8
             }
-        elif entity_type in ["alumni"]:
-            # 校友：晚间为主
+        elif entity_type in ["entrepreneur", "startup", "ceo", "executive",
+                              "investor", "founder"]:
+            # 创业者/高管：工作时间+晚间，中等频率
             return {
                 "activity_level": 0.6,
                 "posts_per_hour": 0.4,
-                "comments_per_hour": 0.8,
-                "active_hours": [12, 13, 19, 20, 21, 22, 23],  # 午休+晚间
-                "response_delay_min": 5,
-                "response_delay_max": 30,
-                "sentiment_bias": 0.0,
-                "stance": "neutral",
-                "influence_weight": 1.0
+                "comments_per_hour": 0.6,
+                "active_hours": sorted(set(work_hours + peak_hours)),
+                "response_delay_min": 10,
+                "response_delay_max": 60,
+                "sentiment_bias": 0.1,
+                "stance": "advocate",
+                "influence_weight": 1.8
+            }
+        elif entity_type in ["contentcreator", "influencer", "blogger", "youtuber"]:
+            # 内容创作者：全天活动，高互动频率
+            return {
+                "activity_level": 0.85,
+                "posts_per_hour": 0.7,
+                "comments_per_hour": 2.0,
+                "active_hours": all_day,
+                "response_delay_min": 2,
+                "response_delay_max": 20,
+                "sentiment_bias": 0.15,
+                "stance": "advocate",
+                "influence_weight": 1.5
             }
         else:
             # 普通人：晚间高峰
@@ -980,7 +1044,7 @@ class SimulationConfigGenerator:
                 "activity_level": 0.7,
                 "posts_per_hour": 0.5,
                 "comments_per_hour": 1.2,
-                "active_hours": [9, 10, 11, 12, 13, 18, 19, 20, 21, 22, 23],  # 白天+晚间
+                "active_hours": sorted(set(work_hours[:5] + peak_hours)),
                 "response_delay_min": 2,
                 "response_delay_max": 20,
                 "sentiment_bias": 0.0,

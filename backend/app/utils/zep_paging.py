@@ -6,6 +6,7 @@ Zep 的 node/edge 列表接口使用 UUID cursor 分页，
 
 from __future__ import annotations
 
+import re as _re_mod
 import time
 from collections.abc import Callable
 from typing import Any
@@ -41,14 +42,29 @@ def _fetch_page_with_retry(
     for attempt in range(max_retries):
         try:
             return api_call(*args, **kwargs)
-        except (ConnectionError, TimeoutError, OSError, InternalServerError) as e:
+        except Exception as e:
             last_exception = e
+            err_str = str(e)
+
+            # Respect retry-after header for 429 rate-limit responses
+            m = _re_mod.search(r"['\"]retry-after['\"]:\s*['\"](\d+)['\"]", err_str)
+            if m:
+                wait = float(m.group(1)) + 2
+            elif "429" in err_str or "Rate limit" in err_str:
+                wait = 60.0  # safe default for free-plan rate limits
+            elif isinstance(e, (ConnectionError, TimeoutError, OSError, InternalServerError)):
+                wait = delay
+                delay *= 2
+            else:
+                # Non-retryable error (e.g. 400, 404) — raise immediately
+                raise
+
             if attempt < max_retries - 1:
                 logger.warning(
-                    f"Zep {page_description} attempt {attempt + 1} failed: {str(e)[:100]}, retrying in {delay:.1f}s..."
+                    f"Zep {page_description} attempt {attempt + 1} failed: {str(e)[:80]}, "
+                    f"retrying in {wait:.0f}s..."
                 )
-                time.sleep(delay)
-                delay *= 2
+                time.sleep(wait)
             else:
                 logger.error(f"Zep {page_description} failed after {max_retries} attempts: {str(e)}")
 

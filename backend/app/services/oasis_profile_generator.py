@@ -26,6 +26,89 @@ from .zep_entity_reader import EntityNode, ZepEntityReader
 logger = get_logger('mirofish.oasis_profile')
 
 
+# MBTI types most commonly associated with each broad role category
+_ROLE_MBTI: Dict[str, List[str]] = {
+    "leader":     ["ENTJ", "ESTJ", "INTJ", "ENTP"],
+    "creative":   ["INFP", "ENFP", "INFJ", "ISFP"],
+    "analytical": ["INTP", "INTJ", "ISTJ", "ENTP"],
+    "social":     ["ESFJ", "ENFJ", "ESFP", "ENFP"],
+    "default":    ["INTJ", "ENTJ", "INFP", "ISTP", "ENTP", "ISFJ", "ESTJ", "INFJ"],
+}
+
+_ENTITY_ROLE_MAP: Dict[str, str] = {
+    "entrepreneur": "leader", "ceo": "leader", "executive": "leader",
+    "politician": "leader", "official": "leader", "founder": "leader",
+    "contentcreator": "creative", "influencer": "creative", "blogger": "creative",
+    "journalist": "creative", "youtuber": "creative",
+    "researcher": "analytical", "professor": "analytical", "expert": "analytical",
+    "scientist": "analytical", "airesearcher": "analytical", "engineer": "analytical",
+    "student": "social", "alumni": "social", "person": "social",
+}
+
+
+def _role_based_mbti(entity_type: str) -> str:
+    """Return an MBTI type appropriate for the entity's role."""
+    role = _ENTITY_ROLE_MAP.get(entity_type.lower(), "default")
+    return random.choice(_ROLE_MBTI[role])
+
+
+def _influence_defaults(entity_type: str):
+    """
+    Return (karma, follower_count, friend_count, statuses_count) defaults
+    that reflect realistic social influence for the entity type.
+    """
+    et = entity_type.lower()
+    if et in ["mediaoutlet", "governmentagency", "university", "organization"]:
+        return (
+            random.randint(8000, 50000),   # karma
+            random.randint(10000, 500000), # followers
+            random.randint(200, 2000),     # friends
+            random.randint(2000, 20000),   # statuses
+        )
+    if et in ["politician", "official", "celebrity", "publicfigure"]:
+        return (
+            random.randint(5000, 30000),
+            random.randint(5000, 200000),
+            random.randint(100, 1000),
+            random.randint(1000, 10000),
+        )
+    if et in ["professor", "expert", "researcher", "scientist", "airesearcher"]:
+        return (
+            random.randint(2000, 15000),
+            random.randint(1000, 30000),
+            random.randint(200, 1500),
+            random.randint(500, 5000),
+        )
+    if et in ["entrepreneur", "ceo", "founder", "executive", "investor"]:
+        return (
+            random.randint(3000, 20000),
+            random.randint(2000, 50000),
+            random.randint(300, 2000),
+            random.randint(500, 8000),
+        )
+    if et in ["contentcreator", "influencer", "blogger", "youtuber", "journalist"]:
+        return (
+            random.randint(2000, 25000),
+            random.randint(5000, 100000),
+            random.randint(500, 3000),
+            random.randint(1000, 15000),
+        )
+    if et in ["student", "alumni"]:
+        return (
+            random.randint(100, 2000),
+            random.randint(50, 800),
+            random.randint(30, 300),
+            random.randint(50, 1000),
+        )
+    # Default / Person
+    return (
+        random.randint(200, 3000),
+        random.randint(50, 2000),
+        random.randint(20, 300),
+        random.randint(50, 1500),
+    )
+
+
 @dataclass
 class OasisAgentProfile:
     """OASIS Agent Profile数据结构"""
@@ -253,16 +336,20 @@ class OasisProfileGenerator:
                 entity_attributes=entity.attributes
             )
         
+        # Derive influence-realistic defaults based on entity type
+        karma_default, follower_default, friend_default, statuses_default = \
+            _influence_defaults(entity_type)
+
         return OasisAgentProfile(
             user_id=user_id,
             user_name=user_name,
             name=name,
             bio=profile_data.get("bio", f"{entity_type}: {name}"),
             persona=profile_data.get("persona", entity.summary or f"A {entity_type} named {name}."),
-            karma=profile_data.get("karma", random.randint(500, 5000)),
-            friend_count=profile_data.get("friend_count", random.randint(50, 500)),
-            follower_count=profile_data.get("follower_count", random.randint(100, 1000)),
-            statuses_count=profile_data.get("statuses_count", random.randint(100, 2000)),
+            karma=profile_data.get("karma", karma_default),
+            friend_count=profile_data.get("friend_count", friend_default),
+            follower_count=profile_data.get("follower_count", follower_default),
+            statuses_count=profile_data.get("statuses_count", statuses_default),
             age=profile_data.get("age"),
             gender=profile_data.get("gender"),
             mbti=profile_data.get("mbti"),
@@ -789,7 +876,7 @@ class OasisProfileGenerator:
                 "persona": f"{entity_name} is a {entity_type.lower()} who is actively engaged in academic and social discussions. They enjoy sharing perspectives and connecting with peers.",
                 "age": random.randint(18, 30),
                 "gender": random.choice(["male", "female"]),
-                "mbti": random.choice(self.MBTI_TYPES),
+                "mbti": _role_based_mbti(entity_type),
                 "country": random.choice(self.COUNTRIES),
                 "profession": "Student",
                 "interested_topics": ["Education", "Social Issues", "Technology"],
@@ -838,7 +925,7 @@ class OasisProfileGenerator:
                 "persona": entity_summary or f"{entity_name} is a {entity_type.lower()} participating in social discussions.",
                 "age": random.randint(25, 50),
                 "gender": random.choice(["male", "female"]),
-                "mbti": random.choice(self.MBTI_TYPES),
+                "mbti": _role_based_mbti(entity_type),
                 "country": random.choice(self.COUNTRIES),
                 "profession": entity_type,
                 "interested_topics": ["General", "Social Issues"],

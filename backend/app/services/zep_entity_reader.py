@@ -3,6 +3,7 @@ Zep实体读取与过滤服务
 从Zep图谱中读取节点，筛选出符合预定义实体类型的节点
 """
 
+import re as _re_mod
 import time
 from typing import Dict, Any, List, Optional, Set, Callable, TypeVar
 from dataclasses import dataclass, field
@@ -85,43 +86,61 @@ class ZepEntityReader:
         
         self.client = Zep(api_key=self.api_key)
     
+    @staticmethod
+    def _parse_retry_after(exc: Exception) -> Optional[float]:
+        """Extract retry-after seconds from a Zep 429 exception string."""
+        import re as _re
+        err_str = str(exc)
+        # header format: 'retry-after': '49'
+        m = _re_mod.search(r"['\"]retry-after['\"]:\s*['\"](\d+)['\"]", err_str)
+        if m:
+            return float(m.group(1)) + 2  # add 2s buffer
+        # body fallback
+        if "429" in err_str or "Rate limit" in err_str:
+            return 60.0  # safe default for free-plan 429
+        return None
+
     def _call_with_retry(
-        self, 
-        func: Callable[[], T], 
+        self,
+        func: Callable[[], T],
         operation_name: str,
-        max_retries: int = 3,
+        max_retries: int = 5,
         initial_delay: float = 2.0
     ) -> T:
         """
-        带重试机制的Zep API调用
-        
+        带重试机制的Zep API调用，自动读取 retry-after 头
+
         Args:
-            func: 要执行的函数（无参数的lambda或callable）
+            func: 要执行的函数
             operation_name: 操作名称，用于日志
-            max_retries: 最大重试次数（默认3次，即最多尝试3次）
-            initial_delay: 初始延迟秒数
-            
+            max_retries: 最大重试次数（默认5次）
+            initial_delay: 非限速错误的初始延迟秒数
+
         Returns:
             API调用结果
         """
         last_exception = None
         delay = initial_delay
-        
+
         for attempt in range(max_retries):
             try:
                 return func()
             except Exception as e:
                 last_exception = e
                 if attempt < max_retries - 1:
+                    # Respect retry-after for rate-limit errors
+                    retry_after = self._parse_retry_after(e)
+                    wait = retry_after if retry_after else delay
                     logger.warning(
-                        f"Zep {operation_name} 第 {attempt + 1} 次尝试失败: {str(e)[:100]}, "
-                        f"{delay:.1f}秒后重试..."
+                        f"Zep {operation_name} 第 {attempt + 1} 次尝试失败: {str(e)[:80]}, "
+                        f"{wait:.0f}秒后重试..."
                     )
-                    time.sleep(delay)
-                    delay *= 2  # 指数退避
+                    time.sleep(wait)
+                    if not retry_after:
+                        delay *= 2  # exponential backoff for non-rate-limit errors
                 else:
                     logger.error(f"Zep {operation_name} 在 {max_retries} 次尝试后仍失败: {str(e)}")
-        
+
         raise last_exception
     
     def get_all_nodes(self, graph_id: str) -> List[Dict[str, Any]]:
